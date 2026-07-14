@@ -14,7 +14,9 @@ Routes:
     /buckets/                         GET: list buckets
     /buckets/<b>                      PUT: create, DELETE: remove (if empty)
     /buckets/<b>/objects/             GET: list keys (?prefix=&marker=&limit=)
-                                      POST: create, server picks the key
+                                      POST: create, server picks the key (the
+                                      content hash — so POST here is retry-safe
+                                      and idempotent, unusual but deliberate)
     /buckets/<b>/objects/<key…>       PUT / GET / HEAD / DELETE one object
 """
 # Copyright (c) 2026 Benjamin Lang. All rights reserved.
@@ -72,11 +74,15 @@ def read_request(conn):
 
     if "content-length" in headers:
         content_length = int(headers["content-length"])
+        # bytearray: appending is amortized O(1); immutable bytes += would
+        # recopy the whole buffer every chunk (quadratic on large bodies).
+        body = bytearray(body)
         while len(body) < content_length:
-            data = conn.recv(4096)
+            data = conn.recv(65536)
             if not data:
                 raise ConnectionError("client hung up mid-body")
-            body += data
+            body.extend(data)
+        body = bytes(body)
 
     return method, path, query, headers, body
 
